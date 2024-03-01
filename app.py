@@ -8,10 +8,9 @@ from sklearn.feature_selection import mutual_info_regression
 import numpy as np
 from pyvis.network import Network
 
-
 def main():
     st.set_page_config(layout="wide")  # Set the layout to wide for full-screen display
-    st.title("TITLE")
+    st.title("PatStrat: A Framework for Embedding Multi-Modal Patient Similarity Network for Tailor-made  Stratification")
     # Initialize a list to store uploaded files
     uploaded_files = []
     Input_dfs = []
@@ -31,8 +30,14 @@ def view_uploaded_files_tab(uploaded_files):
         if uploaded_file is not None:
             # Append uploaded file to the list
             uploaded_files.append(uploaded_file)
+    
+    ground_truth = st.sidebar.file_uploader(f"Ground Truth", type=["csv"])
+    uploaded_files.append(ground_truth)
+
     # Display all uploaded files in one row
-    st.write("## Modalities")
+    st.write("## Biological Question: Prediction of Drug Responses with Multi-Modal Biological Data Integration?")
+    
+    st.write("### Modalities")
     columns = st.columns(int(num_files))
     Input_dfs = []
     for i, uploaded_file in enumerate(uploaded_files):
@@ -52,7 +57,7 @@ def view_uploaded_files_tab(uploaded_files):
 def view_preProcessing_dfs(Input_dfs):
     processed_dfs = []
     # Add a button to trigger DataFrame processing
-    if st.button("Process All DataFrames", key="process_button"):
+    if st.button("Perform Pre-processing of the Input Data", key="process_button"):
         with st.spinner("Processing DataFrames..."):
             # Process each DataFrame
             for df in Input_dfs:
@@ -70,11 +75,13 @@ def view_inferring_networks(processed_dfs):
             np.fill_diagonal(df.values, 0)
             G = nx.from_pandas_adjacency(df)
             
+            
             with columns[i % int(3)]:
                 st.write(df)
                 net = Network(height='400px',width='100%',bgcolor='#222222',font_color='white')
                 net.from_nx(G)
                 net.set_options('''var options = {"physics": {"enabled": false}}''')
+                
                 try:
                     path = '/tmp'
                     net.save_graph(f'{path}/pyvis_graph.html')
@@ -85,7 +92,6 @@ def view_inferring_networks(processed_dfs):
                     net.save_graph(f'{path}/pyvis_graph.html')
                     HtmlFile = open(f'{path}/pyvis_graph.html', 'r', encoding='utf-8')
                 components.html(HtmlFile.read(), height=435)
-
 
 def view_integration_nets(nets):
     embeddings = []
