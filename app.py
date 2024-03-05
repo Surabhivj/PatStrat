@@ -12,6 +12,13 @@ from sklearn import manifold, cluster
 import mplcursors
 import matplotlib.lines as mlines
 
+from bokeh.models import HoverTool, ColumnDataSource
+from bokeh.plotting import figure
+from bokeh.io import output_notebook, show
+import altair as alt
+
+
+
 def main():
     st.set_page_config(layout="wide")  # Set the layout to wide for full-screen display
     st.title("PatStrat: A Framework for Embedding Multi-Modal Patient Similarity Network for Tailor-made  Stratification")
@@ -21,9 +28,17 @@ def main():
     processed_dfs = []
     # Handle tab selection
     Inputs = view_uploaded_files_tab(uploaded_files)
+    st.write('### Exploration of individual Modalities: Unsupervised Approach:')
     
     if len(Inputs) == len(uploaded_files):
         processed_dfs = view_preProcessing_dfs(Inputs)
+    
+    st.write('### Patient Similarity Network (Per Modality):')
+
+    
+    st.write('### Drug Response Prediction: Supervised Approach:')
+    
+    
     #view_inferring_networks(processed_dfs)
     
     
@@ -43,10 +58,8 @@ def view_uploaded_files_tab(uploaded_files):
     
     ground_truth = st.sidebar.file_uploader(f"Ground Truth", type=["csv"])
     uploaded_files.append(ground_truth)
-
     # Display all uploaded files in one row
     st.write("## Biological Question: Prediction of Drug Responses with Multi-Modal Biological Data Integration?")
-    
     st.write("### Modalities")
     columns = st.columns(int(num_files + 1))
     Input_dfs = []
@@ -77,7 +90,6 @@ def view_uploaded_files_tab(uploaded_files):
 
 ######################################   second row  in app ######################################################
 
-
 def view_preProcessing_dfs(Input_dfs):
     processed_dfs = []
     
@@ -85,8 +97,7 @@ def view_preProcessing_dfs(Input_dfs):
         num_columns = len(Input_dfs)
         if num_columns > 0:
             columns = st.columns(num_columns)
-            st.write(num_columns)
-            
+            #st.write(num_columns)
             # Process each DataFrame
             for idx, df in enumerate(Input_dfs):
                 with columns[idx]:
@@ -140,9 +151,8 @@ def view_preProcessing_dfs(Input_dfs):
     return processed_dfs
 
 
-
-
 ######################################   third row  in app ######################################################
+
 
 def view_inferring_networks(processed_dfs):
     columns = st.columns(int(3))
@@ -169,6 +179,10 @@ def view_inferring_networks(processed_dfs):
                     net.save_graph(f'{path}/pyvis_graph.html')
                     HtmlFile = open(f'{path}/pyvis_graph.html', 'r', encoding='utf-8')
                 components.html(HtmlFile.read(), height=435)
+                
+                
+######################################   third row  in app ######################################################
+
 
 def view_integration_nets(nets):
     embeddings = []
@@ -188,38 +202,29 @@ def view_integration_nets(nets):
 # Define the plot_drug_response function
 def plot_drug_response(dat, selected_DR):
     # Assuming you have already imported normalized_df and want to plot the value counts for the specified row and column
-    
     # High =  '#AB238C'
     # moderate = '#27B1A3'
     # low = '#D2A435'
+    
     colors = {'High': '#AB238C','Moderate': '#27B1A3','Low': '#D2A435'}
     row_data = dat.loc[selected_DR].value_counts()
-
-    # Get a colormap
-    #colors = plt.cm.Set2(np.linspace(0, 1, len(row_data)))
-
     # Creating the bar plot
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(5, 5))
     bars = ax.bar(row_data.index, row_data.values, color=[colors[val] for val in row_data.index])
-
     # Adding labels and title
     ax.set_xlabel('Response Category', fontsize=12)
     ax.set_ylabel('No. of Patients', fontsize=12)
     ax.set_title(f'Response for {selected_DR}', fontsize=14)
-
     # Adding gridlines
     ax.grid(axis='y', linestyle='--', alpha=0.7)
-
     # Display percentage on top of each bar
     for bar in bars:
         height = bar.get_height()
         ax.text(bar.get_x() + bar.get_width() / 2, height + 0.1, f"{(height / row_data.sum() * 100):.2f}%", ha='center', va='bottom', fontsize=10)
-
     # Display the plot
     ax.tick_params(axis='x', rotation=0, labelsize=12)  # Rotate x-axis labels for better readability
     ax.tick_params(axis='y', labelsize=10)
     plt.tight_layout()  # Adjust layout to prevent clipping of labels
-
     # Return the plot
     return fig
 
@@ -262,66 +267,78 @@ def factorize_(df):
         return 'Moderate'
     elif (df < 0.3):
         return 'Low'
-    
 
-def test_manifold_learning(data, method_name, color_map, n_neighbors=10, perplexity=2, eps=0.2,random_state=123456):
+def test_manifold_learning(dat, method_name, color_map, n_neighbors=10, perplexity=2, random_state=123456):
     """
     Test a manifold learning method and plot the result.
-    
+
     Parameters:
         data (array-like): Input data matrix of shape (n_samples, n_features).
         method_name (str): Name of the manifold learning method.
         n_neighbors (int): Number of neighbors parameter (used in some methods).
         perplexity (int): Perplexity parameter (used in TSNE).
-        eps (float): Maximum distance between two samples for one to be considered as in the neighborhood of the other (DBSCAN parameter).
-        min_samples (int): Number of samples in a neighborhood for a point to be considered as a core point (DBSCAN parameter).
+        random_state (int): Random state.
     """
-    fig, ax = plt.subplots(figsize=(8, 6))
-
-    if method_name == 'Isomap':
-        embedding = manifold.Isomap(n_neighbors=n_neighbors, n_components=2).fit_transform(data)
-    elif method_name == 'LocallyLinearEmbedding':
-        embedding = manifold.LocallyLinearEmbedding(n_neighbors=n_neighbors, n_components=2, random_state=random_state, method='standard').fit_transform(data)
-    elif method_name == 'TSNE':
-        embedding = manifold.TSNE(n_components=2, init='pca', perplexity=perplexity,random_state=random_state).fit_transform(data)
-    elif method_name == 'MDS':
-        embedding = manifold.MDS(n_components=2, random_state=random_state).fit_transform(data)
-    elif method_name == 'SpectralEmbedding':
-        embedding = manifold.SpectralEmbedding(n_components=2, random_state=random_state).fit_transform(data)
-        
-
-    colors_reversedict = {'#AB238C' : 'High Response', '#27B1A3': 'Moderate Response', '#D2A435' : 'Low Response', 'grey': 'NA'}
+    # Perform manifold learning
+    try:
+        if method_name == 'Isomap':
+            embedding = manifold.Isomap(n_neighbors=n_neighbors, n_components=2).fit_transform(dat)
+        elif method_name == 'LocallyLinearEmbedding':
+            embedding = manifold.LocallyLinearEmbedding(n_neighbors=n_neighbors, n_components=2, random_state=random_state, method='standard').fit_transform(dat)
+        elif method_name == 'TSNE':
+            embedding = manifold.TSNE(n_components=2, init='pca', perplexity=perplexity, random_state=random_state).fit_transform(dat)
+        elif method_name == 'MDS':
+            embedding = manifold.MDS(n_components=2, random_state=random_state).fit_transform(dat)
+        elif method_name == 'SpectralEmbedding':
+            embedding = manifold.SpectralEmbedding(n_components=2, random_state=random_state).fit_transform(dat)
+        else:
+            raise ValueError("Unsupported method_name. Supported values are 'Isomap', 'LocallyLinearEmbedding', 'TSNE', 'MDS', and 'SpectralEmbedding'.")
+    except ValueError as e:
+        st.error(str(e))
+        return
 
     # Perform k-means clustering
     kmeans = cluster.KMeans(n_clusters=3, random_state=random_state)
     cluster_labels = kmeans.fit_predict(embedding)
-
-    # Define markers for each cluster
-    markers = ['o', 's', '^']
-
-    # Plot the embedding with colors and different markers for each cluster
-    for i, marker in enumerate(markers):
-        cluster_mask = (cluster_labels == i)
-        ax.scatter(embedding[cluster_mask, 0], embedding[cluster_mask, 1], c=[color_map[ID] for ID in data.index[cluster_mask]], marker=marker, label=f'Cluster {i + 1}')
-
-    # Add legend for markers and colors
-    unique_colors = list(set([color_map[ID] for ID in data.index]))
-    marker_legend_handles = [mlines.Line2D([], [], color='black', marker=marker, linestyle='None', markersize=10, label=f'Cluster {i + 1}') for i, marker in enumerate(markers)]
-    color_legend_handles = [mlines.Line2D([], [], color=color, marker='o', linestyle='None', markersize=10, label=colors_reversedict[color]) for color in unique_colors]
-    handles = marker_legend_handles + color_legend_handles
-    ax.legend(handles=handles, title='Legend', bbox_to_anchor=(0.5, -0.15), loc='upper center', ncol=len(handles))
-
-
-    plt.title(f'{method_name}')
-    plt.xlabel('Component 1')
-    plt.ylabel('Component 2')
-
     
-    # Enable hover functionality
-    mplcursors.cursor(hover=True)
+    # Create a sample dataframe
+    data = pd.DataFrame({
+        'x': embedding[:, 0],
+        'y': embedding[:, 1],
+        'ID': dat.index,
+        'KMeans Cluster': cluster_labels + 1
+    })
     
-    # Display the plot in Streamlit
-    st.pyplot(plt.gcf())
+    # Map IDs to colors
+    data['color'] = data['ID'].map(color_map)
+
+    # Create scatter plot using Altair
+    scatter_plot = alt.Chart(data).mark_circle(size = 100).encode(
+        x='x',
+        y='y',
+        color=alt.Color('color', scale=None, legend=alt.Legend(title='Response Level', values=list(color_map.values()), labelOverlap='parity', symbolLimit=200)),
+        tooltip=['ID','KMeans Cluster']
+    ).properties(
+        width=500,
+        height=400
+    ).configure_legend(
+    orient='bottom'
+).interactive()
+    
+
+    # Streamlit app
+    #st.markdown(f"<h3 style='font-size:24px;'>{method_name}</h3>", unsafe_allow_html=True)
+
+    # Render the plot
+    st.altair_chart(scatter_plot, use_container_width=True)
+
+
+
+
+
+
+
+
 
 
 
