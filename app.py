@@ -1,4 +1,5 @@
-import functions as F
+from functions import GCN, GAT, GAE
+import torch.nn.functional as F
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -31,6 +32,8 @@ from torch_geometric.utils import to_networkx
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
 import numpy as np
+import random
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 
 def main():
@@ -55,9 +58,9 @@ def main():
     
     st.write('### Drug Response Prediction (Per Modality): Supervised Approach:')
     
-    if len(Glist) == len(processed_dfs) - 1:
-        
-        view_single_modality_RL(Glist,processed_dfs)
+    if Glist is not None:
+        if len(Glist) == len(processed_dfs) - 1:
+            view_single_modality_RL(Glist,processed_dfs)
     
     st.write('### Drug Response Prediction (Multi-Modal): Supervised Approach:')
     
@@ -187,25 +190,25 @@ def view_preProcessing_dfs(Input_dfs):
 
 
 def view_inferring_networks(processed_dfs):
-    Glist = []
+    
     if processed_dfs is not None:
         num_columns = len(processed_dfs)
         if num_columns > 0:
             columns = st.columns(num_columns)
+            Glist = []
             for i, df in enumerate(processed_dfs):
                 if df is not None:
-                    if i < (num_columns -1):
+                    if i < (num_columns - 1):
                         df = df.apply(normalize_row, axis=1)
-                        df = df.corr()
+                        df = df.corr(method=custom_mi_reg)
                         threshold = columns[i].slider("Threshold", min_value=0.0, max_value=1.0, value=0.5, step=0.05, key=f"thresh_{i}")
-                        # Apply threshold for z-score
                         df[abs(df) < threshold] = 0
                         np.fill_diagonal(df.values, 0)
                         G = nx.from_pandas_adjacency(df)
                         Glist.append(G)
                         # Display network
-                        with columns[i % int(num_columns)]:
-                            net = Network(height='400px',width='100%',bgcolor='#222222',font_color='white')
+                        with columns[i]:
+                            net = Network(height='400px', width='100%', bgcolor='#222222', font_color='white')
                             net.from_nx(G)
                             net.set_options('''var options = {"physics": {"enabled": false}}''')
                             try:
@@ -218,114 +221,183 @@ def view_inferring_networks(processed_dfs):
                                 HtmlFile = open(f'{path}/pyvis_graph.html', 'r', encoding='utf-8')
                             components.html(HtmlFile.read(), height=435)
                             
-                                                # Add download button
+                            # Add download button
                             csv_data = df.to_csv(index=False).encode('utf-8')
                             columns[i].download_button(
                                 label="Download Adjacency Matrix as CSV",
                                 data=csv_data,
                                 file_name='Network_adjacency.csv',
                                 mime='text/csv', key=f"adj_{i}")
-    return Glist
-
+            return Glist
 
 ######################################   fourth row  in app ######################################################
 
-def view_single_modality_RL(Glist,processed_dfs):
+def view_single_modality_RL(Glist, processed_dfs):
     if Glist is not None:
         num_columns = len(Glist)
         if num_columns > 0:
             columns = st.columns(num_columns)
             for i, G in enumerate(Glist):
                 if G is not None:
-                    GroundTruthDat = processed_dfs[-1].transpose()
-                    st.write(GroundTruthDat['Bendamustine_DNA-alkylating agent'])
-                    num_nodes = len(G.nodes)
-                    
-                    #node_labels = [i for ]
-                    
+                    with columns[i % int(num_columns)]:
+                        GroundTruthDat = processed_dfs[-1]
+                        num_nodes = len(G.nodes)
+                        cols = st.columns(2)
+                        method = cols[0].selectbox("Select Method", ["GCN", "GAT", "GAE"], key=f"selc_method_{i}")
+                        drug = cols[1].selectbox('Select Drug', tuple(GroundTruthDat.index), key=f"seldrug_{i}")
+                        df = GroundTruthDat.transpose()[drug]
+                        response_dict = dict({'Low': 1, 'Moderate': 2, 'High': 3})
+                        df = df.replace(response_dict).fillna(4)
+                        # Add attributes to nodes from DataFrame (if necessary)
+                        # Iterate over each node and its cluster label
+                        for node, cl in df.to_dict().items():
+                            # Check if the node exists in the graph
+                            if node in G.nodes:
+                                # Node exists, update its cluster attribute
+                                G.nodes[node]['class_label'] = cl
+                        # Initialize an empty list to store 'class_label' attributes
+                        class_labels = []
+                        # Iterate over nodes in the graph
+                        for node, attributes in G.nodes(data=True):
+                            # Check if the 'class_label' attribute exists for the node
+                            if 'class_label' in attributes:
+                                # If the attribute exists, append its value to the list
+                                class_label = attributes['class_label']
+                                class_labels.append(class_label)
+                        # Print the list of 'class_label' attributes
+                        #st.write(class_labels)
+                        node_to_index = {node: index for index, node in enumerate(G.nodes)}
+                        # Get the edge indices using the integer indices
+                        edges = list(G.edges())
+                        source_nodes, target_nodes = zip(*edges)
+                        source_indices = [node_to_index[node] for node in source_nodes]
+                        target_indices = [node_to_index[node] for node in target_nodes]
+                        
+                        edge_index = torch.tensor([source_indices, target_indices], dtype=torch.long)
+                        num_nodes = len(G.nodes)
+                        x = torch.randn(num_nodes, 16)  # Random node features of size 16
+                        # Create a PyTorch geometric Data object
+                        data = Data(x=x, edge_index=edge_index)
+                        
+                        y = torch.tensor(class_labels, dtype=torch.long)
+                        data.y = y
+                        #st.write(data.y)
+                        if st.button("Train Model", key = f'train_button{i}'):
+                            single_modality_RL(data, method)
+
 
 ################# Functions that need to be moved to another file ##############################################
 
-def load_data(G):
-    num_nodes = len(G.nodes)
-    # Generate node labels
-    import random
-    node_labels = [random.randint(0, 2) for _ in range(num_nodes)]  # Example node labels
-    # Convert NetworkX graph to PyTorch Geometric Data object
-    edge_index = torch.tensor(list(G.edges)).t().contiguous()
-    x = torch.randn(num_nodes, 16)  # Random node features of size 16
-    data = Data(x=x, edge_index=edge_index)
-    
-    # Set node labels
-    y = torch.tensor(node_labels, dtype=torch.long)
-    data.y = y
-    return data
 
-
-def single_modality_RL(data):
-    st.title("Node Classification with Graph Neural Networks")
-    # Load data
-    
+def single_modality_RL(data, method):
+    # Train/test split
     # Train/test split
     train_mask = torch.zeros(data.num_nodes, dtype=torch.bool)
     train_mask[:int(data.num_nodes * 0.8)] = 1  # Use 80% of nodes for training
     test_mask = ~train_mask
-    # Select method
-    method = st.sidebar.selectbox("Select Method", ["GCN", "GAT", "GAE"])
+    
+    #st.write(len(train_mask))
+
     if method == "GCN":
-        model = F.GCN(input_dim=data.num_features, hidden_dim=16, output_dim=5)
+        np.random.seed(12)
+        model = GCN(input_dim=data.num_features, hidden_dim=16, output_dim=5)
     elif method == "GAT":
-        model = F.GAT(input_dim=data.num_features, hidden_dim=16, output_dim=5)
+        np.random.seed(23)
+        model = GAT(input_dim=data.num_features, hidden_dim=16, output_dim=5)
     elif method == "GAE":
-        model = F.GAE(input_dim=data.num_features, hidden_dim=16, output_dim=5)
+        np.random.seed(34)
+        model = GAE(input_dim=data.num_features, hidden_dim=16, output_dim=5)
     
-    # Step 3: Train Model (assuming labels are already present)
-    # Here, we'll simply train the model on the Karate Club dataset without any split.
-    # In practice, you should split your data into training and validation sets.
-    
-    model = GCN(input_dim=data.num_features, hidden_dim=16, output_dim=5)
+    # Train Model
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=5e-4)
     
-    # Training
-    model.train()
-    for epoch in range(200):
-        optimizer.zero_grad()
-        out = model(data)
-        loss = F.nll_loss(out[train_mask], data.y[train_mask])  # Use only training nodes for loss computation
-        loss.backward()
-        optimizer.step()
+    # Lists to store metrics for each run
+    accuracy_list = []
+    precision_list_micro = []
+    recall_list_micro = []
+    f1_score_list_micro = []
+    precision_list_macro = []
+    recall_list_macro = []
+    f1_score_list_macro = []
 
-    # Evaluation
-    model.eval()
-    with torch.no_grad():
-        logits = model(data)
-        pred = logits.argmax(dim=1)
-        test_correct = pred[test_mask] == data.y[test_mask]
-        test_acc = int(test_correct.sum()) / int(test_mask.sum())
-    st.write("Test Accuracy: {:.4f}".format(test_acc)) 
-    
-    
-    # Compute and plot the confusion matrix
-    cm = confusion_matrix(data.y[test_mask], pred[test_mask])
-    
-    # Plot confusion matrix with percentages
-    plt.figure(figsize=(8, 6))
-    cm_normalized = cm.astype('float') *100 / cm.sum(axis=1)[:, np.newaxis]
-    plt.imshow(cm_normalized, interpolation='nearest', cmap=plt.cm.Blues)
-    plt.title('Normalized Confusion Matrix')
-    plt.colorbar()
-    plt.xticks(np.arange(3))
-    plt.yticks(np.arange(3))
-    plt.xlabel('Predicted label')
-    plt.ylabel('True label')
-    for i in range(cm.shape[0]):
-        for j in range(cm.shape[1]):
-            plt.text(j, i, "{:0.2f}".format(cm_normalized[i, j]),
-                    ha="center", va="center",
-                    color="white" if cm_normalized[i, j] > cm_normalized.max() / 2. else "black")
+    # Perform 10 runs
+    for run in range(10):   
+        # Training
+        model.train()
+        for epoch in range(200):
+            optimizer.zero_grad()
+            out = model(data)
+            loss = criterion(out[train_mask], data.y[train_mask])  # Use only training nodes for loss computation
+            loss.backward()
+            optimizer.step()
+        # Evaluation
+        model.eval()
+        with torch.no_grad():
+            logits = model(data)
+            pred = logits.argmax(dim=1)
+
+        y_pred =  pred[test_mask]
+        y_true = data.y[test_mask]
+
+        # Calculate metrics for the current run
+        accuracy = accuracy_score(y_true, y_pred)
+        precision_micro = precision_score(y_true, y_pred, average='micro')
+        precision_macro = precision_score(y_true, y_pred, average='macro')
+        recall_micro = recall_score(y_true, y_pred, average='micro')
+        recall_macro = recall_score(y_true, y_pred, average='macro')
+        f1_micro = f1_score(y_true, y_pred, average='micro')
+        f1_macro = f1_score(y_true, y_pred, average='macro')
+
+        # Store the metrics for the current run
+        accuracy_list.append(accuracy)
+        precision_list_micro.append(precision_micro)
+        recall_list_micro.append(recall_micro)
+        f1_score_list_micro.append(f1_micro)
+        precision_list_macro.append(precision_macro)
+        recall_list_macro.append(recall_macro)
+        f1_score_list_macro.append(f1_macro)
+
+    # Calculate mean and standard deviation of each metric
+    accuracy_mean = np.mean(accuracy_list)
+    precision_mean_micro = np.mean(precision_list_micro)
+    recall_mean_micro = np.mean(recall_list_micro)
+    f1_score_mean_micro = np.mean(f1_score_list_micro)
+    precision_mean_macro = np.mean(precision_list_macro)
+    recall_mean_macro = np.mean(recall_list_macro)
+    f1_score_mean_macro = np.mean(f1_score_list_macro)
+
+    accuracy_std = np.std(accuracy_list)
+    precision_std_micro = np.std(precision_list_micro)
+    recall_std_micro = np.std(recall_list_micro)
+    f1_score_std_micro = np.std(f1_score_list_micro)
+    precision_std_macro = np.std(precision_list_macro)
+    recall_std_macro = np.std(recall_list_macro)
+    f1_score_std_macro = np.std(f1_score_list_macro)
+
+    # Plot the metrics
+    plt.figure(figsize=(10, 6))
+
+    plt.errorbar(['Accuracy', 'Precision (Micro)', 'Recall (Micro)', 'F1 Score (Micro)',
+                'Precision (Macro)', 'Recall (Macro)', 'F1 Score (Macro)'],
+                [accuracy_mean, precision_mean_micro, recall_mean_micro, f1_score_mean_micro,
+                precision_mean_macro, recall_mean_macro, f1_score_mean_macro],
+                yerr=[accuracy_std, precision_std_micro, recall_std_micro, f1_score_std_micro,
+                    precision_std_macro, recall_std_macro, f1_score_std_macro],
+                fmt='o')
+
+    # Add annotations for mean values
+    for i, value in enumerate([accuracy_mean, precision_mean_micro, recall_mean_micro, f1_score_mean_micro,
+                precision_mean_macro, recall_mean_macro, f1_score_mean_macro]):
+        plt.annotate(f'{round(value, 2)}', (i, value))
+
+    plt.title('Metrics across 10 runs')
+    plt.xlabel('Metric')
+    plt.ylabel('Value')
+    plt.grid(True)
     plt.tight_layout()
     st.pyplot(plt)
+
     
     
 
