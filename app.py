@@ -187,10 +187,7 @@ def view_preProcessing_dfs(Input_dfs):
 
 
 ######################################   third row  in app ######################################################
-
-
-def view_inferring_networks(processed_dfs):
-    
+def view_inferring_networks(processed_dfs): 
     if processed_dfs is not None:
         num_columns = len(processed_dfs)
         if num_columns > 0:
